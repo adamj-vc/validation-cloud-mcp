@@ -16,6 +16,7 @@ An MCP server implementation for interacting with Validation Cloud's Ethereum No
 #### 
 ## Setup 
 1. Find Node Path
+   
 Find your node path by running
 
 ```bash
@@ -23,7 +24,7 @@ which node
 ```
 The output will be your "command" value for the configuration.
 
-2. Set Up Validation Cloud MCP
+1. Set Up Validation Cloud MCP
    
 Clone and build the repository:
   
