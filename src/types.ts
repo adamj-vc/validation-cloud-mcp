@@ -1,4 +1,14 @@
 /**
+ * Logger interface for custom logging implementations
+ */
+export interface Logger {
+    debug(message: string, ...args: any[]): void;
+    info(message: string, ...args: any[]): void;
+    warn(message: string, ...args: any[]): void;
+    error(message: string, ...args: any[]): void;
+}
+
+/**
  * Custom error class for Validation Cloud API errors
  */
 export class ValidationCloudError extends Error {
@@ -25,6 +35,8 @@ export interface ValidationCloudConfig {
     baseURL?: string;
     /** Request timeout in milliseconds */
     timeout?: number;
+    /** Optional custom logger implementation */
+    logger?: Logger;
 }
 
 /**

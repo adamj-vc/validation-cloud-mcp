@@ -1,4 +1,4 @@
-import axios, { AxiosInstance } from 'axios';
+import axios, { AxiosInstance, AxiosError } from 'axios';
 import {
     ValidationCloudConfig,
     ValidationCloudError,
@@ -10,33 +10,60 @@ import {
 import { transformResponse } from './utils.js';
 
 /**
- * Client for interacting with the Validation Cloud API
- * @example
- * ```typescript
- * const client = new ValidationCloudAPI({ apiKey: 'your-api-key' });
- * const response = await client.request({ method: 'eth_blockNumber' });
- * ```
+ * Interface for API error response data
  */
+interface APIErrorResponse {
+    message: string;
+    [key: string]: any;
+}
+
+/**
+ * Simple logger interface that can be implemented by users
+ */
+export interface Logger {
+    debug(message: string, ...args: any[]): void;
+    info(message: string, ...args: any[]): void;
+    warn(message: string, ...args: any[]): void;
+    error(message: string, ...args: any[]): void;
+}
+
+/**
+ * Default logger implementation using console
+ */
+class DefaultLogger implements Logger {
+    debug(message: string, ...args: any[]): void {
+        console.debug(`[ValidationCloudAPI] ${message}`, ...args);
+    }
+
+    info(message: string, ...args: any[]): void {
+        console.log(`[ValidationCloudAPI] ${message}`, ...args);
+    }
+
+    warn(message: string, ...args: any[]): void {
+        console.warn(`[ValidationCloudAPI] ${message}`, ...args);
+    }
+
+    error(message: string, ...args: any[]): void {
+        console.error(`[ValidationCloudAPI] ${message}`, ...args);
+    }
+}
+
 export class ValidationCloudAPI {
     private readonly client: AxiosInstance;
+    private readonly logger: Logger;
     private static readonly DEFAULT_BASE_URL = 'https://mainnet.ethereum.validationcloud.io/v1';
     private static readonly DEFAULT_TIMEOUT = 30000;
 
-    /**
-     * Creates a new Validation Cloud API client
-     * @param config - Configuration options
-     * @throws {Error} When API key is missing
-     */
-    constructor(config: ValidationCloudConfig) {
+    constructor(config: ValidationCloudConfig & { logger?: Logger }) {
         if (!config.apiKey) {
             throw new Error('API key is required');
         }
 
-        // Construct the URL with the API key
+        this.logger = config.logger || new DefaultLogger();
         const baseUrl = `${config.baseURL || ValidationCloudAPI.DEFAULT_BASE_URL}/${config.apiKey}`;
 
-        console.error('[ValidationCloudAPI] Initializing with config:', {
-            baseURL: baseUrl.replace(config.apiKey, '[HIDDEN]'), // Hide key in logs
+        this.logger.info('Initializing with config:', {
+            baseURL: baseUrl.replace(config.apiKey, '[HIDDEN]'),
             timeout: config.timeout || ValidationCloudAPI.DEFAULT_TIMEOUT
         });
 
@@ -48,51 +75,28 @@ export class ValidationCloudAPI {
             }
         });
 
-        // Add response interceptor for error handling and logging
         this.client.interceptors.request.use(
             (config) => {
-                console.error('[ValidationCloudAPI] Making request:', {
-                    url: config.url?.replace(config.baseURL || '', '[BASE_URL]'), // Hide key in logs
+                this.logger.debug('Making request:', {
+                    url: config.url?.replace(config.baseURL || '', '[BASE_URL]'),
                     method: config.method,
                     data: config.data
                 });
                 return config;
-            },
-            (error) => {
-                console.error('[ValidationCloudAPI] Request error:', error);
-                return Promise.reject(error);
             }
         );
 
         this.client.interceptors.response.use(
             (response) => {
-                console.error('[ValidationCloudAPI] Received response:', {
+                this.logger.debug('Received response:', {
                     status: response.status,
                     data: response.data
                 });
                 return response;
-            },
-            (error) => {
-                console.error('[ValidationCloudAPI] Response error:', {
-                    message: error.message,
-                    response: error.response?.data,
-                    status: error.response?.status
-                });
-                throw new ValidationCloudError(
-                    error.response?.data?.message || error.message,
-                    error.response?.status,
-                    error.response?.data
-                );
             }
         );
     }
 
-    /**
-     * Validate parameters for a specific Ethereum JSON-RPC method
-     * @param method - The method to validate parameters for
-     * @param params - The parameters to validate
-     * @throws {ValidationCloudError} If parameters are invalid
-     */
     private validateParams(method: keyof EthereumParams, params?: any[]): void {
         // Special validation for common methods
         switch (method) {
@@ -131,58 +135,66 @@ export class ValidationCloudAPI {
         }
     }
 
-    /**
-     * Make a JSON-RPC request to the Ethereum node
-     * @param params - Request parameters
-     * @returns Promise resolving to API response with transformed values
-     * @throws {ValidationCloudError} On API errors
-     */
     async request(params: NodeRequestParams): Promise<ValidationCloudResponse> {
-        console.error('[ValidationCloudAPI] Making JSON-RPC request:', {
-            method: params.method,
-            params: params.params
-        });
-
-        // Validate parameters
-        this.validateParams(params.method, params.params);
-
-        const requestBody = {
-            jsonrpc: '2.0',
-            id: Date.now(),
-            method: params.method,
-            params: params.params || []
-        };
-
-        console.error('[ValidationCloudAPI] Request body:', requestBody);
-
         try {
+            this.logger.debug('Making JSON-RPC request:', {
+                method: params.method,
+                params: params.params
+            });
+
+            this.validateParams(params.method, params.params);
+
+            const requestBody = {
+                jsonrpc: '2.0',
+                id: Date.now(),
+                method: params.method,
+                params: params.params || []
+            };
+
+            this.logger.debug('Request body:', requestBody);
+
             const response = await this.client.post<ValidationCloudResponse>('', requestBody);
 
-            // Transform the response data
             if (response.data.result !== undefined) {
                 response.data.result = transformResponse(params.method, response.data.result);
             }
 
-            console.error('[ValidationCloudAPI] Transformed response:', response.data);
+            this.logger.debug('Transformed response:', response.data);
             return response.data;
         } catch (error) {
-            console.error('[ValidationCloudAPI] Request failed:', error);
-            throw error;
+            this.logger.error('Request failed:', error);
+
+            // Handle Axios errors
+            if (axios.isAxiosError(error)) {
+                throw new ValidationCloudError(
+                    error.response?.data?.message || error.message,
+                    error.response?.status,
+                    error.response?.data as Record<string, any>
+                );
+            }
+
+            // If it's already a ValidationCloudError, rethrow it
+            if (error instanceof ValidationCloudError) {
+                throw error;
+            }
+
+            // Handle other errors
+            throw new ValidationCloudError(
+                error instanceof Error ? error.message : 'Unknown error',
+                undefined,
+                undefined
+            );
         }
     }
 
-    /**
-     * Test API connectivity and credentials
-     * @returns Promise resolving to boolean indicating success
-     */
     async testConnection(): Promise<boolean> {
         try {
-            console.error('[ValidationCloudAPI] Testing connection...');
+            this.logger.info('Testing connection...');
             await this.request({ method: 'eth_blockNumber' });
-            console.error('[ValidationCloudAPI] Connection test successful');
+            this.logger.info('Connection test successful');
             return true;
         } catch (error) {
-            console.error('[ValidationCloudAPI] Connection test failed:', error);
+            this.logger.error('Connection test failed:', error);
             return false;
         }
     }

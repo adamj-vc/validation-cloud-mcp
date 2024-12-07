@@ -5,10 +5,12 @@ import { EthereumParams } from './types.js';
  * @param hex - Hex string (with or without '0x' prefix)
  * @returns Decimal number
  */
-export function hexToDecimal(hex: string): number {
-    if (!hex) return 0;
+export function hexToDecimal(hex: string | null | undefined): number {
+    if (!hex || hex === '0x') return 0;
     // Remove '0x' prefix if present and convert to decimal
-    return parseInt(hex.replace('0x', ''), 16);
+    const cleanHex = hex.toString().replace('0x', '');
+    const result = parseInt(cleanHex, 16);
+    return isNaN(result) ? 0 : result;
 }
 
 /**
@@ -16,12 +18,18 @@ export function hexToDecimal(hex: string): number {
  * @param hex - Hex string (with or without '0x' prefix)
  * @returns Decimal string
  */
-export function hexToDecimalString(hex: string): string {
-    if (!hex) return '0';
-    // Remove '0x' prefix if present
-    const cleanHex = hex.replace('0x', '');
-    // Convert to decimal string (handles large numbers better than parseInt)
-    return BigInt('0x' + cleanHex).toString();
+export function hexToDecimalString(hex: string | null | undefined): string {
+    if (!hex || hex === '0x') return '0';
+    try {
+        // Remove '0x' prefix if present
+        const cleanHex = hex.toString().replace('0x', '');
+        // Handle empty string after removing prefix
+        if (!cleanHex) return '0';
+        // Convert to decimal string (handles large numbers better than parseInt)
+        return BigInt(`0x${cleanHex}`).toString();
+    } catch (error) {
+        return '0';
+    }
 }
 
 /**
@@ -29,11 +37,15 @@ export function hexToDecimalString(hex: string): string {
  * @param weiHex - Wei amount in hex
  * @returns Ether amount as string with 18 decimal places
  */
-export function weiToEther(weiHex: string): string {
-    if (!weiHex) return '0';
-    const wei = BigInt(weiHex);
-    const ether = Number(wei) / 1e18;
-    return ether.toString();
+export function weiToEther(weiHex: string | null | undefined): string {
+    if (!weiHex || weiHex === '0x') return '0';
+    try {
+        const wei = BigInt(weiHex);
+        const ether = Number(wei) / 1e18;
+        return ether.toString();
+    } catch (error) {
+        return '0';
+    }
 }
 
 /**
@@ -52,6 +64,7 @@ export function transformResponse(method: keyof EthereumParams, result: any): an
             return hexToDecimal(result);
 
         case 'eth_getBalance':
+            if (typeof result !== 'string') return result;
             return {
                 wei: hexToDecimalString(result),
                 ether: weiToEther(result)
@@ -62,13 +75,17 @@ export function transformResponse(method: keyof EthereumParams, result: any): an
             if (typeof result === 'object') {
                 return {
                     ...result,
-                    number: hexToDecimal(result.number),
-                    gasLimit: hexToDecimal(result.gasLimit),
-                    gasUsed: hexToDecimal(result.gasUsed),
-                    timestamp: hexToDecimal(result.timestamp),
-                    transactions: result.transactions.map((tx: any) =>
-                        typeof tx === 'object' ? transformTransaction(tx) : tx
-                    )
+                    ...(result.number && { number: hexToDecimal(result.number) }),
+                    ...(result.gasLimit && { gasLimit: hexToDecimal(result.gasLimit) }),
+                    ...(result.gasUsed && { gasUsed: hexToDecimal(result.gasUsed) }),
+                    ...(result.timestamp && { timestamp: hexToDecimal(result.timestamp) }),
+                    ...(result.transactions && {
+                        transactions: Array.isArray(result.transactions)
+                            ? result.transactions.map((tx: any) =>
+                                typeof tx === 'object' ? transformTransaction(tx) : tx
+                            )
+                            : result.transactions
+                    })
                 };
             }
             return result;
